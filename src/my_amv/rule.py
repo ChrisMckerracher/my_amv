@@ -175,16 +175,16 @@ class CompositeRule(EffectRule[None]):
 
     def __init__(
         self,
-        layers: list[LayerBlend],
+        layers: list[LayerBlend] | None = None,
         background: LayerKey | None = None,
     ) -> None:
         """Initialize CompositeRule.
 
         Args:
-            layers: List of layers to blend, in back-to-front order
+            layers: List of layers to blend, in back-to-front order (default: [])
             background: Background layer to start with (default: Layer.MAIN)
         """
-        self.layers = layers
+        self.layers = layers if layers is not None else []
         self.background = background if background is not None else Layer.MAIN
         # CompositeRule always outputs to a layer (branch mode)
         self.output_layer = Layer.FINAL
