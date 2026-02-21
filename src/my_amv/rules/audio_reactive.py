@@ -1,0 +1,1 @@
+"""Audio-reactive effect rules."""

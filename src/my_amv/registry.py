@@ -1,0 +1,1 @@
+"""EffectRule registration and discovery."""
