@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AMV Pipeline — Architecture</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a14;--surface:#0f0f1e;--card:#141428;--border:#252540;
+  --text:#e8ecf8;--muted:#8892aa;--accent:#00e5ff;
+  --enum:#c084fc;--frozen:#34d5c0;--mutable:#60a5fa;--abc:#fb923c;
+  --concrete:#4ade80;--alias:#94a3b8;--tvar:#fbbf24;
+  --mono:'Cascadia Code','Fira Code','JetBrains Mono','SF Mono',Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100vh}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:40px 40px;opacity:0.2;pointer-events:none;z-index:0}
+
+header{position:relative;z-index:10;padding:10px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:rgba(15,15,30,0.97);backdrop-filter:blur(8px);flex-shrink:0}
+.logo{display:flex;align-items:center;gap:12px}
+.logo-mark{width:32px;height:32px;border:2px solid var(--accent);border-radius:4px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;color:var(--accent);font-weight:700;letter-spacing:-1px}
+.logo-text{font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase}
+.logo-sub{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:1px}
+.meta{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right;line-height:1.8}
+.meta strong{color:var(--accent)}
+
+.tabs{position:relative;z-index:10;display:flex;padding:0 24px;border-bottom:1px solid var(--border);background:rgba(15,15,30,0.97);backdrop-filter:blur(8px);flex-shrink:0}
+.tab{padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:color .15s,border-color .15s;user-select:none;font-family:var(--mono)}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+.views{flex:1;overflow:hidden;position:relative;z-index:1}
+.view{position:absolute;inset:0;overflow:auto;display:none;padding:24px}
+.view.active{display:block}
+
+/* ── TYPE SYSTEM ── */
+#view-types{overflow:hidden;padding:0;cursor:grab;user-select:none}
+#view-types.panning{cursor:grabbing}
+#type-inner{position:absolute;top:0;left:0;transform-origin:0 0;width:1520px;height:860px}
+#type-svg{position:absolute;top:0;left:0;width:1520px;height:860px;pointer-events:none;z-index:1}
+
+.type-node{position:absolute;background:var(--card);border:1px solid var(--border);border-radius:8px;cursor:move;min-width:210px;z-index:2;overflow:hidden;transition:border-color .2s,box-shadow .15s}
+.type-node:hover{box-shadow:0 6px 24px rgba(0,0,0,.5)}
+.node-header{padding:10px 14px;display:flex;align-items:center;gap:8px;pointer-events:none}
+.node-badge{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:3px 7px;border-radius:3px;flex-shrink:0;white-space:nowrap}
+.node-name{font-family:var(--mono);font-size:14px;font-weight:700}
+.node-generic{font-family:var(--mono);font-size:11px;color:var(--tvar);margin-left:1px}
+.node-body{display:none;padding:8px 14px 12px;border-top:1px solid var(--border);font-family:var(--mono);font-size:12px;line-height:1.7;pointer-events:none}
+.type-node.expanded .node-body{display:block}
+.nb-section{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
+.nb-section:first-child{margin-top:2px}
+.nb-field{display:flex;gap:5px;padding:2px 0;flex-wrap:wrap;align-items:baseline}
+.fn{color:#79b8ff}.fsep{color:var(--muted)}.ft{color:#e9c46a}.fc{color:var(--muted);font-size:11px}
+.nb-method{padding:2px 0;color:#c084fc;font-size:12px}
+.nb-method span{color:var(--muted)}
+.nb-method.abstract{color:var(--abc)}
+
+.node-enum    {border-color:rgba(192,132,252,.35)}.node-enum.expanded,.node-enum:hover    {border-color:var(--enum)}
+.node-frozen  {border-color:rgba(52,213,192,.35)}.node-frozen.expanded,.node-frozen:hover  {border-color:var(--frozen)}
+.node-mutable {border-color:rgba(96,165,250,.35)}.node-mutable.expanded,.node-mutable:hover {border-color:var(--mutable)}
+.node-abc     {border-color:rgba(251,146,60,.35)}.node-abc.expanded,.node-abc:hover     {border-color:var(--abc)}
+.node-concrete{border-color:rgba(74,222,128,.35)}.node-concrete.expanded,.node-concrete:hover{border-color:var(--concrete)}
+.node-alias   {border-color:rgba(148,163,184,.35)}.node-alias.expanded,.node-alias:hover   {border-color:var(--alias)}
+.node-tvar    {border-color:rgba(251,191,36,.35)}.node-tvar.expanded,.node-tvar:hover    {border-color:var(--tvar)}
+
+.badge-enum    {background:rgba(192,132,252,.12);color:var(--enum)}
+.badge-frozen  {background:rgba(52,213,192,.12);color:var(--frozen)}
+.badge-mutable {background:rgba(96,165,250,.12);color:var(--mutable)}
+.badge-abc     {background:rgba(251,146,60,.12);color:var(--abc)}
+.badge-concrete{background:rgba(74,222,128,.12);color:var(--concrete)}
+.badge-alias   {background:rgba(148,163,184,.12);color:var(--alias)}
+.badge-tvar    {background:rgba(251,191,36,.12);color:var(--tvar)}
+
+/* HUD */
+.ts-hud{position:absolute;bottom:14px;right:14px;z-index:20;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.ts-hint{font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:5px 10px}
+.ts-legend{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 16px}
+.legend-title{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.legend-item{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12px;color:var(--text);padding:2px 0}
+.l-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+
+/* ── DATA FLOW ── */
+#view-flow{padding:16px;overflow:auto}
+#flow-svg-wrap{min-width:1020px}
+#flow-svg{width:100%;height:auto;display:block}
+
+/* ── CALL STACK ── */
+#view-callstack{overflow:auto}
+.cs-intro{font-family:var(--mono);font-size:13px;color:var(--muted);margin-bottom:22px;padding-bottom:16px;border-bottom:1px solid var(--border);line-height:1.8}
+.cs-intro strong{color:var(--accent)}
+.call-tree{font-family:var(--mono);font-size:13px;line-height:1.45}
+.call-node{position:relative}
+.call-label{display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:5px;cursor:pointer;transition:background .1s;border:1px solid transparent}
+.call-label:hover{background:var(--card);border-color:var(--border)}
+.ctog{width:16px;height:16px;border:1px solid var(--muted);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted);flex-shrink:0;transition:all .2s}
+.call-node.open > .call-label .ctog{background:var(--accent);border-color:var(--accent);color:var(--bg);font-weight:900}
+.cfn{color:#79b8ff}.cparen{color:var(--muted)}.cparam{color:#e9c46a}.cret{color:var(--muted)}.ctype{color:#c084fc}
+.ccomment{color:#6a7a9a;font-style:italic}
+.cpipe{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:3px;margin-left:5px}
+.cpipe-pipeline{background:rgba(96,165,250,.15);color:var(--mutable)}
+.cpipe-audio{background:rgba(52,213,192,.15);color:var(--frozen)}
+.cpipe-loop{background:rgba(251,191,36,.15);color:var(--tvar)}
+.call-children{display:none;padding-left:24px;border-left:1px solid var(--border);margin-left:17px;margin-top:3px;margin-bottom:3px}
+.call-node.open > .call-children{display:block}
+.call-leaf{padding:5px 10px;color:var(--muted);font-size:12px;display:flex;align-items:flex-start;gap:7px}
+.call-leaf::before{content:'→';color:#3a4460;flex-shrink:0;margin-top:1px}
+.call-leaf .hl{color:var(--accent)}.call-leaf .hlg{color:var(--concrete)}
+.cloop-box{padding:7px 12px;margin:5px 0;border:1px dashed var(--border);border-radius:5px;font-size:12px;color:var(--muted);cursor:pointer}
+.cloop-box:hover{border-color:var(--tvar)}
+.cloop-box .hl{color:var(--tvar)}
+
+/* ── LAYER SYSTEM ── */
+#view-layers{overflow:auto}
+.layers-layout{display:grid;grid-template-columns:1fr 360px;gap:28px;max-width:1100px}
+.layers-title{font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.pipeline-step{border:1px solid var(--border);border-radius:7px;overflow:hidden;transition:border-color .25s;cursor:pointer;margin-bottom:6px}
+.pipeline-step.active{border-color:var(--accent)}
+.step-header{padding:10px 16px;display:flex;align-items:center;gap:10px;background:var(--card)}
+.step-num{font-family:var(--mono);font-size:11px;color:var(--muted);width:20px;flex-shrink:0}
+.step-badge{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 7px;border-radius:3px;flex-shrink:0}
+.sb-inline  {background:rgba(96,165,250,.15);color:var(--mutable)}
+.sb-branch  {background:rgba(251,191,36,.15);color:var(--tvar)}
+.sb-composite{background:rgba(74,222,128,.15);color:var(--concrete)}
+.sb-init    {background:rgba(148,163,184,.15);color:var(--alias)}
+.step-name{font-family:var(--mono);font-size:13px;font-weight:700;flex:1}
+.step-arrow{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis}
+.step-body{padding:12px 16px 14px;font-family:var(--mono);font-size:12px;border-top:1px solid var(--border);display:none;background:var(--bg);line-height:1.7}
+.pipeline-step.active .step-body{display:block}
+.step-line{padding:2px 0;color:var(--muted)}
+.step-line .hl{color:var(--accent)}.step-line .hlg{color:var(--concrete)}.step-line .hly{color:var(--tvar)}.step-line .hlp{color:var(--mutable)}.step-line .hle{color:var(--enum)}
+.context-box{background:var(--card);border:1px solid var(--border);border-radius:7px;overflow:hidden;font-family:var(--mono);font-size:12px}
+.context-header{padding:10px 14px;background:var(--surface);font-weight:700;border-bottom:1px solid var(--border);color:var(--mutable);display:flex;align-items:center;justify-content:space-between}
+.context-section{padding:10px 14px;border-bottom:1px solid var(--border)}
+.context-section:last-child{border-bottom:none}
+.cs-label{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.ctx-field{display:flex;justify-content:space-between;padding:3px 0;color:var(--muted);font-size:12px}
+.ctx-field .fn{color:#79b8ff}.ctx-field .ft{color:#e9c46a}
+.layer-entry{display:flex;justify-content:space-between;align-items:center;padding:4px 0;opacity:0;transform:translateX(-6px);transition:opacity .3s,transform .3s}
+.layer-entry.visible{opacity:1;transform:none}
+.le-k{color:#79b8ff}.le-enum{color:var(--enum)}.le-str{color:#a8cc8c}
+.le-val{color:var(--muted);font-size:11px}
+@keyframes lflash{0%{background:rgba(0,229,255,.15)}100%{background:transparent}}
+.layer-new{animation:lflash .5s ease-out}
+.layers-controls{display:flex;gap:8px;margin-top:18px;align-items:center}
+.btn{padding:7px 16px;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-family:var(--mono);font-size:12px;cursor:pointer;transition:border-color .15s,background .15s}
+.btn:hover{border-color:var(--accent);background:rgba(0,229,255,.05);color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:700}
+.btn.primary:hover{background:#33eeff}
+.btn:disabled{opacity:.4;cursor:default;pointer-events:none}
+.step-counter{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">AMV</div>
+    <div>
+      <div class="logo-text">AMV Pipeline</div>
+      <div class="logo-sub">Architecture Reference</div>
+    </div>
+  </div>
+  <div class="meta">
+    <div>Last updated: <strong id="last-updated"></strong></div>
+    <div>This file must be kept up to date. See <strong>AGENTS.md</strong></div>
+  </div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-view="types">01 — Type System</div>
+  <div class="tab" data-view="flow">02 — Data Flow</div>
+  <div class="tab" data-view="callstack">03 — Call Stack</div>
+  <div class="tab" data-view="layers">04 — Layer System</div>
+</div>
+
+<div class="views">
+
+<!-- ── VIEW 1: TYPE SYSTEM ── -->
+<div id="view-types" class="view active">
+  <div id="type-inner">
+    <svg id="type-svg"></svg>
+    <!-- nodes injected by JS -->
+  </div>
+  <div class="ts-hud">
+    <div class="ts-hint">scroll to zoom · drag background to pan · click nodes to expand</div>
+    <div class="ts-legend">
+      <div class="legend-title">Type Categories</div>
+      <div class="legend-item"><div class="l-dot" style="background:var(--alias)"></div>TypeAlias</div>
+      <div class="legend-item"><div class="l-dot" style="background:var(--tvar)"></div>TypeVar</div>
+      <div class="legend-item"><div class="l-dot" style="background:var(--enum)"></div>Enum</div>
+      <div class="legend-item"><div class="l-dot" style="background:var(--frozen)"></div>Frozen Dataclass</div>
+      <div class="legend-item"><div class="l-dot" style="background:var(--mutable)"></div>Mutable Dataclass</div>
+      <div class="legend-item"><div class="l-dot" style="background:var(--abc)"></div>Abstract Base Class</div>
+      <div class="legend-item"><div class="l-dot" style="background:var(--concrete)"></div>Concrete Class</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── VIEW 2: DATA FLOW ── -->
+<div id="view-flow" class="view">
+  <div id="flow-svg-wrap">
+    <svg id="flow-svg" viewBox="0 0 1020 570" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ah"       markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L10,4 z" fill="#6b7280"/></marker>
+        <marker id="ah-blue"  markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L10,4 z" fill="#60a5fa"/></marker>
+        <marker id="ah-teal"  markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L10,4 z" fill="#34d5c0"/></marker>
+        <marker id="ah-cyan"  markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L10,4 z" fill="#00e5ff"/></marker>
+        <marker id="ah-green" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L10,4 z" fill="#4ade80"/></marker>
+      </defs>
+      <rect width="1020" height="570" fill="#0a0a14"/>
+      <!-- INPUT -->
+      <rect x="20" y="65" width="130" height="44" rx="6" fill="#141428" stroke="#60a5fa" stroke-width="1.5"/>
+      <text x="85" y="84" text-anchor="middle" font-family="Consolas,monospace" font-size="13" font-weight="700" fill="#60a5fa">video.mp4</text>
+      <text x="85" y="99" text-anchor="middle" font-family="Consolas,monospace" font-size="10" fill="#4a6a9a">source video</text>
+      <rect x="20" y="165" width="130" height="44" rx="6" fill="#141428" stroke="#34d5c0" stroke-width="1.5"/>
+      <text x="85" y="184" text-anchor="middle" font-family="Consolas,monospace" font-size="13" font-weight="700" fill="#34d5c0">music.mp3</text>
+      <text x="85" y="199" text-anchor="middle" font-family="Consolas,monospace" font-size="10" fill="#2a7a72">separate audio</text>
+      <!-- PROCESSING -->
+      <rect x="210" y="65" width="155" height="44" rx="6" fill="#141428" stroke="#6b7280" stroke-width="1.5"/>
+      <text x="287" y="84" text-anchor="middle" font-family="Consolas,monospace" font-size="12" font-weight="700" fill="#a0aec0">FFmpeg Extract</text>
+      <text x="287" y="99" text-anchor="middle" font-family="Consolas,monospace" font-size="10" fill="#4a5a6a">frames → tmp/</text>
+      <rect x="210" y="165" width="175" height="44" rx="6" fill="#141428" stroke="#34d5c0" stroke-width="1.5"/>
+      <text x="297" y="184" text-anchor="middle" font-family="Consolas,monospace" font-size="12" font-weight="700" fill="#34d5c0">AudioSource</text>
+      <text x="297" y="199" text-anchor="middle" font-family="Consolas,monospace" font-size="10" fill="#2a7a72">.analyze() → list[AudioFrame]</text>
+      <!-- PIPELINE BOX -->
+      <rect x="450" y="20" width="340" height="530" rx="8" fill="#080814" stroke="#00e5ff" stroke-width="1.5"/>
+      <rect x="451" y="21" width="338" height="528" rx="7" fill="none" stroke="rgba(0,229,255,0.06)" stroke-width="8"/>
+      <text x="620" y="48" text-anchor="middle" font-family="Consolas,monospace" font-size="14" font-weight="700" fill="#00e5ff">Pipeline.process_video()</text>
+      <text x="620" y="66" text-anchor="middle" font-family="Consolas,monospace" font-size="11" fill="#4a8090">for each frame:</text>
+      <line x1="466" y1="74" x2="774" y2="74" stroke="#1a2a3a" stroke-width="1"/>
+      <!-- steps -->
+      <rect x="462" y="80"  width="316" height="48" rx="4" fill="rgba(52,213,192,0.04)"/>
+      <text x="472" y="99"  font-family="Consolas,monospace" font-size="12" fill="#34d5c0">ctx.audio = audio_source.get_frame(i)</text>
+      <text x="472" y="115" font-family="Consolas,monospace" font-size="10" fill="#2a7a72">inject AudioFrame per frame</text>
+      <rect x="462" y="132" width="316" height="48" rx="4" fill="rgba(192,132,252,0.04)"/>
+      <text x="472" y="151" font-family="Consolas,monospace" font-size="12" fill="#c084fc">ctx.set_layer(Layer.ORIGINAL, frame)</text>
+      <text x="472" y="167" font-family="Consolas,monospace" font-size="10" fill="#5a3a7a">seed input layer</text>
+      <rect x="462" y="184" width="316" height="48" rx="4" fill="rgba(251,146,60,0.04)"/>
+      <text x="472" y="203" font-family="Consolas,monospace" font-size="12" fill="#fb923c">PersonSegmentationRule</text>
+      <text x="472" y="219" font-family="Consolas,monospace" font-size="10" fill="#7a4a20">→ set_layer(Layer.MASK, mask)</text>
+      <rect x="462" y="236" width="316" height="48" rx="4" fill="rgba(251,146,60,0.04)"/>
+      <text x="472" y="255" font-family="Consolas,monospace" font-size="12" fill="#fb923c">EdgeDetectionRule</text>
+      <text x="472" y="271" font-family="Consolas,monospace" font-size="10" fill="#7a4a20">→ set_layer(Layer.EDGES, edges)</text>
+      <rect x="462" y="288" width="316" height="48" rx="4" fill="rgba(251,191,36,0.04)"/>
+      <text x="472" y="307" font-family="Consolas,monospace" font-size="12" fill="#fbbf24">HalfToneRandomizationRule</text>
+      <text x="472" y="323" font-family="Consolas,monospace" font-size="10" fill="#7a6020">→ set_layer("halftone", result)</text>
+      <rect x="462" y="340" width="316" height="48" rx="4" fill="rgba(251,191,36,0.04)"/>
+      <text x="472" y="359" font-family="Consolas,monospace" font-size="12" fill="#fbbf24">AudioReactiveEdgeRule</text>
+      <text x="472" y="375" font-family="Consolas,monospace" font-size="10" fill="#7a6020">→ set_layer("audio_lines", result)</text>
+      <rect x="462" y="392" width="316" height="48" rx="4" fill="rgba(74,222,128,0.06)"/>
+      <text x="472" y="411" font-family="Consolas,monospace" font-size="12" fill="#4ade80">CompositeRule</text>
+      <text x="472" y="427" font-family="Consolas,monospace" font-size="10" fill="#2a6a40">→ set_layer(Layer.FINAL, composite)</text>
+      <rect x="462" y="444" width="316" height="48" rx="4" fill="rgba(0,229,255,0.04)"/>
+      <text x="472" y="463" font-family="Consolas,monospace" font-size="12" fill="#00e5ff">write ctx.get_layer(Layer.FINAL)</text>
+      <text x="472" y="479" font-family="Consolas,monospace" font-size="10" fill="#1a5a6a">→ output frame buffer</text>
+      <line x1="466" y1="498" x2="774" y2="498" stroke="#1a2a3a" stroke-width="1"/>
+      <text x="620" y="518" text-anchor="middle" font-family="Consolas,monospace" font-size="10" fill="#2a4a5a">rules iterate in order · state persists across frames</text>
+      <!-- OUTPUT -->
+      <rect x="860" y="290" width="135" height="44" rx="6" fill="#141428" stroke="#6b7280" stroke-width="1.5"/>
+      <text x="927" y="309" text-anchor="middle" font-family="Consolas,monospace" font-size="12" font-weight="700" fill="#a0aec0">FFmpeg Mux</text>
+      <text x="927" y="324" text-anchor="middle" font-family="Consolas,monospace" font-size="10" fill="#4a5a6a">frames + audio</text>
+      <rect x="860" y="75" width="135" height="44" rx="6" fill="#141428" stroke="#4ade80" stroke-width="2"/>
+      <text x="927" y="94" text-anchor="middle" font-family="Consolas,monospace" font-size="13" font-weight="700" fill="#4ade80">output.mp4</text>
+      <text x="927" y="109" text-anchor="middle" font-family="Consolas,monospace" font-size="10" fill="#2a6a40">processed AMV</text>
+      <!-- ARROWS -->
+      <path d="M150,87 L208,87" stroke="#60a5fa" stroke-width="2" fill="none" marker-end="url(#ah-blue)"/>
+      <path d="M150,187 L208,187" stroke="#34d5c0" stroke-width="2" fill="none" marker-end="url(#ah-teal)"/>
+      <path d="M365,87 L400,87 L400,100 L448,100" stroke="#6b7280" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+      <path d="M385,187 L418,187 L418,155 L448,155" stroke="#34d5c0" stroke-width="2" fill="none" marker-end="url(#ah-teal)"/>
+      <path d="M790,460 L830,460 L830,312 L858,312" stroke="#00e5ff" stroke-width="2" fill="none" marker-end="url(#ah-cyan)"/>
+      <path d="M927,290 L927,121" stroke="#4ade80" stroke-width="2" fill="none" marker-end="url(#ah-green)"/>
+      <rect x="390" y="134" width="64" height="17" rx="3" fill="#0a1820"/>
+      <text x="422" y="146" text-anchor="middle" font-family="Consolas,monospace" font-size="10" fill="#34d5c0">AudioFrames</text>
+    </svg>
+  </div>
+</div>
+
+<!-- ── VIEW 3: CALL STACK ── -->
+<div id="view-callstack" class="view">
+  <div class="cs-intro">Entry point: <strong>Pipeline.process_video(video_path, output_path)</strong><br>Click any node to expand</div>
+  <div class="call-tree" id="call-tree"></div>
+</div>
+
+<!-- ── VIEW 4: LAYER SYSTEM ── -->
+<div id="view-layers" class="view">
+  <div class="layers-layout">
+    <div>
+      <div class="layers-title">Pipeline Execution — Step Through</div>
+      <div id="pipeline-steps"></div>
+      <div class="layers-controls">
+        <button class="btn" id="btn-prev" disabled>← Prev</button>
+        <button class="btn primary" id="btn-next">Next →</button>
+        <button class="btn" id="btn-reset">Reset</button>
+        <span class="step-counter" id="step-counter">Step 0 / 7</span>
+      </div>
+    </div>
+    <div>
+      <div class="layers-title">FrameContext State</div>
+      <div class="context-box">
+        <div class="context-header">
+          <span>FrameContext</span>
+          <span style="color:var(--muted);font-size:11px">frame_index=<span id="ctx-fidx">0</span></span>
+        </div>
+        <div class="context-section">
+          <div class="cs-label">metadata</div>
+          <div class="ctx-field"><span class="fn">fps</span><span class="ft">30.0</span></div>
+          <div class="ctx-field"><span class="fn">timestamp_sec</span><span class="ft" id="ctx-ts">0.000</span></div>
+          <div class="ctx-field"><span class="fn">audio</span><span class="ft" id="ctx-audio" style="color:var(--muted)">None</span></div>
+        </div>
+        <div class="context-section">
+          <div class="cs-label">_layers: dict[LayerKey, RGBArray]</div>
+          <div id="ctx-layers"></div>
+          <div style="color:var(--muted);font-size:11px;margin-top:4px;font-style:italic" id="ctx-empty">empty</div>
+        </div>
+        <div class="context-section">
+          <div class="cs-label">_rule_state: dict[str, StateT]</div>
+          <div id="ctx-rstate"><div style="color:var(--muted);font-size:11px;font-style:italic">empty</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div></div>
+
+<script>
+document.getElementById('last-updated').textContent = new Date().toISOString().slice(0,10);
+
+// ── TAB SWITCHING ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('view-' + tab.dataset.view).classList.add('active');
+    if (tab.dataset.view === 'types') drawArrows();
+  });
+});
+
+// ── TYPE SYSTEM ───────────────────────────────────────────────────────────────
+//
+// Column layout (left → right = primitive → orchestrator):
+//   Col 0  x=24   BlendMode, NDArrays, StateT, Layer
+//   Col 1  x=310  LayerKey, AudioFrame
+//   Col 2  x=610  EffectRule, FrameContext
+//   Col 3  x=930  CompositeRule, AudioSource
+//   Col 4  x=1250 Pipeline
+//
+// All arrows go L→R except FrameContext→EffectRule (same col, loops left).
+
+const TYPE_NODES = [
+  // ── Col 0: primitive types ──
+  { id:'BlendMode',    kind:'alias',    x:24,  y:24,
+    fields:[{n:'=',t:'Literal["screen","multiply","add","over","normal"]',c:''}], methods:[] },
+  { id:'NDArrays',     kind:'alias',    x:24,  y:130,  name:'Array Types',
+    fields:[
+      {n:'RGBArray',t:'NDArray[uint8]',c:'(H,W,3)'},
+      {n:'MaskArray',t:'NDArray[uint8]',c:'(H,W) 0|255'},
+      {n:'EdgeArray',t:'NDArray[uint8]',c:'(H,W)'},
+      {n:'DepthArray',t:'NDArray[float32]',c:'(H,W) 0–1'},
+    ], methods:[] },
+  { id:'StateT',       kind:'tvar',     x:24,  y:260,
+    fields:[{n:'=',t:'TypeVar("StateT")',c:'inter-frame state type'}], methods:[] },
+  { id:'Layer',        kind:'enum',     x:24,  y:380,
+    fields:[
+      {n:'ORIGINAL',t:'"original"',c:''},{n:'MASK',t:'"mask"',c:''},
+      {n:'EDGES',t:'"edges"',c:''},{n:'DEPTH',t:'"depth"',c:''},
+      {n:'SKELETON',t:'"skeleton"',c:''},{n:'FINAL',t:'"final"',c:''},
+    ], methods:[] },
+  // ── Col 1: derived types ──
+  { id:'LayerKey',     kind:'alias',    x:310, y:310,
+    fields:[{n:'=',t:'Layer | str',c:'built-in or user-defined'}], methods:[] },
+  { id:'AudioFrame',   kind:'frozen',   x:310, y:510,  note:'frozen=True',
+    fields:[
+      {n:'rms',t:'float',c:'0–1 loudness'},{n:'beat',t:'bool',c:'onset alignment'},
+      {n:'beat_strength',t:'float',c:'0–1'},{n:'spectrum',t:'NDArray[float32]',c:'FFT bins'},
+      {n:'bands',t:'dict[str,float]',c:'bass/mid/treble'},{n:'onset_strength',t:'float',c:'0–1'},
+      {n:'spectral_centroid',t:'float',c:'0–1'},{n:'tempo_bpm',t:'float',c:'global BPM'},
+    ], methods:[] },
+  // ── Col 2: core abstractions ──
+  { id:'EffectRule',   kind:'abc',      x:610, y:130,  generic:'[StateT]',
+    fields:[
+      {n:'input_layer',t:'LayerKey | None',c:'branch input'},
+      {n:'output_layer',t:'LayerKey | None',c:'branch output'},
+      {n:'is_stateful',t:'bool',c:'property'},
+    ],
+    methods:[
+      {s:'apply(frame: RGBArray, ctx: FrameContext)',r:'→ (RGBArray, FrameContext)',a:true},
+      {s:'initial_state()',r:'→ StateT | None',a:false},
+      {s:'configure(params: dict)',r:'→ None',a:false},
+      {s:'reset_state(ctx)',r:'→ FrameContext',a:false},
+      {s:'name()',r:'→ str',a:false},
+    ] },
+  { id:'FrameContext', kind:'mutable',  x:610, y:490,
+    fields:[
+      {n:'frame_index',t:'int',c:''},{n:'total_frames',t:'int',c:''},
+      {n:'fps',t:'float',c:''},{n:'timestamp_sec',t:'float',c:''},
+      {n:'audio',t:'AudioFrame | None',c:'injected per frame'},
+      {n:'_layers',t:'dict[LayerKey, RGBArray]',c:''},
+      {n:'_previous_frames',t:'dict[LayerKey, RGBArray]',c:'temporal'},
+      {n:'_rule_state',t:'dict[str, object]',c:'namespaced'},
+      {n:'metadata',t:'dict[str, object]',c:'pass-through'},
+    ],
+    methods:[
+      {s:'get_layer(key: LayerKey)',r:'→ RGBArray | None',a:false},
+      {s:'set_layer(key, value: RGBArray)',r:'→ None',a:false},
+      {s:'get_previous(key: LayerKey)',r:'→ RGBArray | None',a:false},
+      {s:'get_rule_state(rule)',r:'→ StateT | None',a:false},
+      {s:'set_rule_state(rule, state)',r:'→ None',a:false},
+    ] },
+  // ── Col 3: concrete implementations ──
+  { id:'CompositeRule',kind:'concrete', x:930, y:24,   generic:'(EffectRule[None])',
+    fields:[
+      {n:'source_layers',t:'list[LayerKey]',c:''},
+      {n:'blend_mode',t:'BlendMode',c:'"screen" default'},
+      {n:'output_layer',t:'LayerKey',c:'Layer.FINAL default'},
+      {n:'opacities',t:'list[float] | None',c:'per-layer'},
+    ],
+    methods:[{s:'apply(frame, ctx)',r:'→ (RGBArray, FrameContext)',a:true}] },
+  { id:'AudioSource',  kind:'concrete', x:930, y:490,
+    fields:[
+      {n:'audio_path',t:'str',c:'separate music file'},
+      {n:'total_frames',t:'int',c:''},{n:'fps',t:'float',c:''},
+    ],
+    methods:[
+      {s:'__init__(audio_path, total_frames, fps)',r:'',a:false},
+      {s:'get_frame(index: int)',r:'→ AudioFrame',a:false},
+    ] },
+  // ── Col 4: orchestrator ──
+  { id:'Pipeline',     kind:'concrete', x:1250, y:310,
+    fields:[
+      {n:'rules',t:'list[EffectRule[object]]',c:'ordered chain'},
+      {n:'audio_path',t:'str | None',c:'separate from video'},
+    ],
+    methods:[
+      {s:'process_video(video_path, output_path)',r:'→ None',a:false},
+      {s:'process_frame(frame: RGBArray, ctx)',r:'→ (RGBArray, FrameContext)',a:false},
+      {s:'reset_all_state(ctx)',r:'→ FrameContext',a:false},
+      {s:'from_config(path: str)',r:'→ Pipeline',a:false},
+    ] },
+];
+
+// Arrows: almost all go L→R. FrameContext→EffectRule is the exception and gets a left-side loop.
+// ty_off / fy_off let us spread multiple arrows entering/leaving the same node.
+const ARROWS = [
+  // Col0 → Col3 (long horizontal above everything)
+  {f:'BlendMode',    t:'CompositeRule', label:'param',            color:'#94a3b8', fy_off:0,  ty_off:-8},
+  // Col0 → Col2 (medium horizontal)
+  {f:'NDArrays',     t:'EffectRule',    label:'apply() param',    color:'#94a3b8', fy_off:0,  ty_off:+12},
+  {f:'StateT',       t:'EffectRule',    label:'Generic[StateT]',  color:'#fbbf24', fy_off:0,  ty_off:0},
+  // Col0 → Col1
+  {f:'Layer',        t:'LayerKey',      label:'is-a',             color:'#c084fc', fy_off:0,  ty_off:0},
+  // Col1 → Col2
+  {f:'LayerKey',     t:'EffectRule',    label:'input/output_layer',color:'#60a5fa',fy_off:-8, ty_off:-8},
+  {f:'LayerKey',     t:'FrameContext',  label:'dict key',         color:'#60a5fa', fy_off:+8, ty_off:-8},
+  {f:'AudioFrame',   t:'FrameContext',  label:'.audio field',     color:'#34d5c0', fy_off:0,  ty_off:+8},
+  // Col2 → Col3
+  {f:'EffectRule',   t:'CompositeRule', label:'extends',          color:'#fb923c', dash:true, fy_off:-8, ty_off:0},
+  // Col2 → Col4
+  {f:'EffectRule',   t:'Pipeline',      label:'list[…]',          color:'#4ade80', fy_off:+8, ty_off:-8},
+  // Col3 → Col4
+  {f:'AudioSource',  t:'Pipeline',      label:'injected by',      color:'#4ade80', fy_off:0,  ty_off:+8},
+  // ── Special: backwards arrow — FrameContext → EffectRule, left-side loop ──
+  {f:'FrameContext',  t:'EffectRule',   label:'apply() param',    color:'#60a5fa', special:'leftloop'},
+];
+
+function buildNode(n) {
+  const el = document.createElement('div');
+  el.id = 'node-' + n.id;
+  el.className = `type-node node-${n.kind}`;
+  el.style.left = n.x + 'px';
+  el.style.top  = n.y + 'px';
+
+  const kindLabel = {alias:'TypeAlias',tvar:'TypeVar',enum:'Enum',frozen:'Dataclass·frozen',mutable:'Dataclass',abc:'ABC',concrete:'Class'}[n.kind];
+  const displayName = n.name || n.id;
+
+  let html = `<div class="node-header">
+    <span class="node-badge badge-${n.kind}">${kindLabel}</span>
+    <span class="node-name">${displayName}</span>`;
+  if (n.generic) html += `<span class="node-generic">${n.generic}</span>`;
+  html += `</div><div class="node-body">`;
+  if (n.note) html += `<div style="color:var(--muted);font-size:11px;margin-bottom:6px">${n.note}</div>`;
+  if (n.fields.length) {
+    html += `<div class="nb-section">Fields</div>`;
+    n.fields.forEach(f => {
+      html += `<div class="nb-field"><span class="fn">${f.n}</span><span class="fsep">:</span><span class="ft">${f.t}</span>${f.c?`<span class="fc">  // ${f.c}</span>`:''}</div>`;
+    });
+  }
+  if (n.methods && n.methods.length) {
+    html += `<div class="nb-section">Methods</div>`;
+    n.methods.forEach(m => {
+      html += `<div class="nb-method${m.a?' abstract':''}">${m.s}<span>${m.r}</span></div>`;
+    });
+  }
+  html += `</div>`;
+  el.innerHTML = html;
+  // click handled in the global mouseup (to distinguish from drag)
+  return el;
+}
+
+// Use offsetLeft/offsetTop — these are in the inner-div coordinate space,
+// same as the SVG, so they're immune to the pan/zoom CSS transform.
+function getRect(id) {
+  const el = document.getElementById('node-' + id);
+  if (!el) return null;
+  return { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+}
+
+function drawArrows() {
+  const svg = document.getElementById('type-svg');
+  let defs = `<defs>`;
+  ARROWS.forEach((a, i) => {
+    defs += `<marker id="m${i}" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L10,4 z" fill="${a.color}"/></marker>`;
+  });
+  defs += `</defs>`;
+
+  let paths = '';
+  ARROWS.forEach((a, i) => {
+    const f = getRect(a.f);
+    const t = getRect(a.t);
+    if (!f || !t) return;
+
+    const fy_off = a.fy_off || 0;
+    const ty_off = a.ty_off || 0;
+
+    let d;
+    if (a.special === 'leftloop') {
+      // FrameContext → EffectRule: exit left side of FrameContext, loop left, enter left of EffectRule
+      const fx  = f.x,             fy  = f.y + f.h / 2 + fy_off;
+      const tx  = t.x,             ty  = t.y + t.h / 2 + ty_off;
+      const lx  = Math.min(f.x, t.x) - 55; // loop anchor left of both nodes
+      d = `M${fx},${fy} C${lx},${fy} ${lx},${ty} ${tx},${ty}`;
+    } else {
+      // Standard L→R: exit right edge of f, enter left edge of t
+      const fx = f.x + f.w,  fy = f.y + f.h / 2 + fy_off;
+      const tx = t.x,         ty = t.y + t.h / 2 + ty_off;
+      const gap  = Math.max(tx - fx, 30);
+      const ctrl = gap * 0.5;
+      d = `M${fx},${fy} C${fx+ctrl},${fy} ${tx-ctrl},${ty} ${tx},${ty}`;
+    }
+
+    const stroke  = `stroke="${a.color}" stroke-width="2" opacity="0.7"`;
+    const dashAttr = a.dash ? ` stroke-dasharray="6,3"` : '';
+    paths += `<path d="${d}" fill="none" ${stroke}${dashAttr} marker-end="url(#m${i})">
+      <title>${a.f} → ${a.t}: ${a.label}</title>
+    </path>`;
+  });
+
+  svg.innerHTML = defs + paths;
+}
+
+// ── PAN + ZOOM + NODE DRAG ────────────────────────────────────────────────────
+let tsScale = 0.78, tsPanX = 20, tsPanY = 20;
+let tsPanning = false, tsPanStartX = 0, tsPanStartY = 0;
+let tsDragNode = null, tsDragOffX = 0, tsDragOffY = 0;
+let tsDragStartCX = 0, tsDragStartCY = 0, tsDragMoved = false;
+const tsView  = document.getElementById('view-types');
+const tsInner = document.getElementById('type-inner');
+
+function applyTsTransform() {
+  tsInner.style.transform = `translate(${tsPanX}px,${tsPanY}px) scale(${tsScale})`;
+}
+
+// Scroll to zoom (zoom toward mouse pointer)
+tsView.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r  = tsView.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const ns = Math.max(0.2, Math.min(3.5, tsScale * factor));
+  tsPanX = mx - (ns / tsScale) * (mx - tsPanX);
+  tsPanY = my - (ns / tsScale) * (my - tsPanY);
+  tsScale = ns;
+  applyTsTransform();
+}, { passive: false });
+
+tsView.addEventListener('mousedown', e => {
+  if (e.target.closest('.ts-hud')) return;
+  const node = e.target.closest('.type-node');
+  if (node) {
+    // Start node drag — compute offset in inner-div space
+    tsDragNode    = node;
+    tsDragStartCX = e.clientX;
+    tsDragStartCY = e.clientY;
+    tsDragMoved   = false;
+    const ir = tsInner.getBoundingClientRect();
+    tsDragOffX = (e.clientX - ir.left) / tsScale - node.offsetLeft;
+    tsDragOffY = (e.clientY - ir.top)  / tsScale - node.offsetTop;
+    e.preventDefault(); // prevent text selection while dragging
+  } else {
+    // Start canvas pan
+    tsPanning   = true;
+    tsPanStartX = e.clientX - tsPanX;
+    tsPanStartY = e.clientY - tsPanY;
+    tsView.classList.add('panning');
+  }
+});
+
+document.addEventListener('mousemove', e => {
+  if (tsDragNode) {
+    // Move threshold: treat as drag only after 4px
+    if (!tsDragMoved && (Math.abs(e.clientX - tsDragStartCX) > 4 || Math.abs(e.clientY - tsDragStartCY) > 4)) {
+      tsDragMoved = true;
+      tsDragNode.style.transition = 'none'; // disable border transition during drag
+    }
+    if (tsDragMoved) {
+      const ir = tsInner.getBoundingClientRect();
+      tsDragNode.style.left = Math.max(0, (e.clientX - ir.left) / tsScale - tsDragOffX) + 'px';
+      tsDragNode.style.top  = Math.max(0, (e.clientY - ir.top)  / tsScale - tsDragOffY) + 'px';
+      drawArrows();
+    }
+  } else if (tsPanning) {
+    tsPanX = e.clientX - tsPanStartX;
+    tsPanY = e.clientY - tsPanStartY;
+    applyTsTransform();
+  }
+});
+
+document.addEventListener('mouseup', e => {
+  if (tsDragNode) {
+    tsDragNode.style.transition = ''; // restore transition
+    if (!tsDragMoved) {
+      // It was a click — toggle expand
+      tsDragNode.classList.toggle('expanded');
+      setTimeout(drawArrows, 50);
+    }
+    tsDragNode = null;
+  }
+  if (tsPanning) { tsPanning = false; tsView.classList.remove('panning'); }
+});
+
+function initTypeSystem() {
+  const inner = document.getElementById('type-inner');
+  TYPE_NODES.forEach(n => inner.appendChild(buildNode(n)));
+  applyTsTransform();
+  setTimeout(drawArrows, 120);
+  window.addEventListener('resize', drawArrows);
+}
+
+initTypeSystem();
+
+// ── CALL STACK ─────────────────────────────────────────────────────────────────
+const CALL_TREE = [{
+  label: '<span class="cfn">Pipeline</span><span class="cparen">.</span><span class="cfn">process_video</span><span class="cparen">(</span><span class="cparam">video_path</span><span class="cret">: str, </span><span class="cparam">output_path</span><span class="cret">: str)</span><span class="cpipe cpipe-pipeline">ENTRY</span>',
+  children: [
+    {leaf:'FFmpeg extract frames → temp directory'},
+    { label: '<span class="cfn">AudioSource</span><span class="cparen">(</span><span class="cparam">audio_path</span><span class="cret">, total_frames, fps)</span><span class="cpipe cpipe-audio">PRE-ANALYSIS</span>',
+      children:[
+        {leaf:'<span class="hl">librosa.load</span>(audio_path, sr=22050)'},
+        {leaf:'Compute FFT, beat_track, onset_detect, RMS per frame'},
+        {leaf:'→ returns <span class="hlg">list[AudioFrame]</span> aligned to video FPS'},
+      ]},
+    {leaf:'FrameContext(frame_index=0, fps=…, total_frames=…)'},
+    { label: '<span class="ctype">for</span> frame <span class="ctype">in</span> extracted_frames<span class="cpipe cpipe-loop">FRAME LOOP</span>',
+      loop: true,
+      children: [
+        { label: '<span class="cfn">Pipeline</span><span class="cparen">.</span><span class="cfn">process_frame</span><span class="cparen">(</span><span class="cparam">frame</span><span class="cret">: RGBArray, </span><span class="cparam">ctx</span><span class="cret">: FrameContext)</span>',
+          children:[
+            {leaf:'ctx.audio = audio_source.get_frame(ctx.frame_index)'},
+            {leaf:'ctx.set_layer(<span class="hl">Layer.ORIGINAL</span>, frame)'},
+            { label: '<span class="ctype">for</span> rule <span class="ctype">in</span> self.rules<span class="cpipe cpipe-loop">RULE CHAIN</span>',
+              loop: true,
+              children:[
+                {leaf:'input_frame = ctx.get_layer(rule.input_layer) <span class="ccomment">  # if input_layer set</span>'},
+                {leaf:'output_frame, ctx = rule.<span class="hl">apply</span>(input_frame, ctx)'},
+                {leaf:'<span class="ctype">if</span> rule.output_layer: ctx.set_layer(rule.output_layer, output_frame) <span class="ccomment">  # branch</span>'},
+                {leaf:'<span class="ctype">else</span>: frame = output_frame <span class="ccomment">  # inline</span>'},
+              ]},
+            {leaf:'return (<span class="hlg">RGBArray</span>, FrameContext)'},
+          ]},
+        {leaf:'scene_cut? → <span class="hl">pipeline.reset_all_state</span>(ctx)'},
+        {leaf:'frame_index % 100 == 0? → checkpoint(ctx)'},
+        {leaf:'write ctx.get_layer(<span class="hl">Layer.FINAL</span>) → output frame'},
+      ]},
+    {leaf:'FFmpeg reassemble frames → video stream'},
+    {leaf:'FFmpeg mux audio_path + video stream → <span class="hlg">output.mp4</span>'},
+  ]
+}];
+
+function buildCallNode(node) {
+  if (node.leaf !== undefined) {
+    const d = document.createElement('div');
+    d.className = 'call-leaf';
+    d.innerHTML = node.leaf;
+    return d;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'call-node';
+  if (node.loop) {
+    const box = document.createElement('div');
+    box.className = 'cloop-box';
+    box.innerHTML = `<span class="hl">↻</span>  ${node.label}`;
+    const kids = document.createElement('div');
+    kids.className = 'call-children';
+    (node.children||[]).forEach(c => kids.appendChild(buildCallNode(c)));
+    box.addEventListener('click', () => wrap.classList.toggle('open'));
+    wrap.appendChild(box);
+    wrap.appendChild(kids);
+    return wrap;
+  }
+  const label = document.createElement('div');
+  label.className = 'call-label';
+  label.innerHTML = `<div class="ctog">+</div>` + node.label;
+  label.addEventListener('click', () => wrap.classList.toggle('open'));
+  wrap.appendChild(label);
+  const kids = document.createElement('div');
+  kids.className = 'call-children';
+  (node.children||[]).forEach(c => kids.appendChild(buildCallNode(c)));
+  wrap.appendChild(kids);
+  return wrap;
+}
+function initCallStack() {
+  const tree = document.getElementById('call-tree');
+  CALL_TREE.forEach(n => { const el = buildCallNode(n); el.classList.add('open'); tree.appendChild(el); });
+}
+initCallStack();
+
+// ── LAYER SYSTEM ──────────────────────────────────────────────────────────────
+const STEPS = [
+  { id:'init', name:'Pipeline initialises FrameContext', badge:'sb-init', badgeLabel:'INIT', arrow:'',
+    ops:[{t:'context = FrameContext(frame_index=<span class="hl">0</span>, fps=30.0, …)'},{t:'context.audio = audio_source.get_frame(<span class="hl">0</span>)'}],
+    layers:[], audio:'AudioFrame(beat=False, rms=0.42, …)', rstate:[]},
+  { id:'original', name:'Pipeline seeds Layer.ORIGINAL', badge:'sb-branch', badgeLabel:'BRANCH', arrow:'set_layer(Layer.ORIGINAL, frame)',
+    ops:[{t:'context.set_layer(<span class="hle">Layer.ORIGINAL</span>, raw_frame)  <span style="color:var(--muted)">// always first</span>'}],
+    layers:[{k:'Layer.ORIGINAL',ke:'enum',v:'RGBArray (H,W,3) uint8'}],
+    audio:'AudioFrame(beat=False, rms=0.42, …)', rstate:[]},
+  { id:'seg', name:'PersonSegmentationRule', badge:'sb-branch', badgeLabel:'BRANCH', arrow:'→ Layer.MASK',
+    ops:[{t:'input = raw_frame'},{t:'mask = rmbg2.infer(input)  → MaskArray'},{t:'context.set_layer(<span class="hle">Layer.MASK</span>, mask)'},{t:'return (frame, context)  <span style="color:var(--muted)">// frame unchanged</span>'}],
+    layers:[{k:'Layer.ORIGINAL',ke:'enum',v:'RGBArray (H,W,3)'},{k:'Layer.MASK',ke:'enum',v:'MaskArray (H,W) — NEW',new:true}],
+    audio:'AudioFrame(beat=False, rms=0.42, …)', rstate:[]},
+  { id:'edge', name:'EdgeDetectionRule', badge:'sb-branch', badgeLabel:'BRANCH', arrow:'→ Layer.EDGES',
+    ops:[{t:'mask = context.get_layer(<span class="hle">Layer.MASK</span>)'},{t:'edges = lineart.detect(masked(frame, mask))'},{t:'context.set_layer(<span class="hle">Layer.EDGES</span>, edges)'}],
+    layers:[{k:'Layer.ORIGINAL',ke:'enum',v:'RGBArray (H,W,3)'},{k:'Layer.MASK',ke:'enum',v:'MaskArray (H,W)'},{k:'Layer.EDGES',ke:'enum',v:'EdgeArray (H,W) — NEW',new:true}],
+    audio:'AudioFrame(beat=False, rms=0.42, …)', rstate:[]},
+  { id:'halftone', name:'HalfToneRandomizationRule', badge:'sb-branch', badgeLabel:'BRANCH', arrow:'"halftone" ← input: Layer.EDGES',
+    ops:[{t:'input = context.get_layer(<span class="hle">Layer.EDGES</span>)'},{t:'state = context.get_rule_state(self)'},{t:'result = apply_halftone(input, state)'},{t:'context.set_layer(<span class="hly">"halftone"</span>, result)  <span style="color:var(--muted)">// branch</span>'},{t:'return (frame, context)'}],
+    layers:[{k:'Layer.ORIGINAL',ke:'enum',v:'RGBArray (H,W,3)'},{k:'Layer.MASK',ke:'enum',v:'MaskArray (H,W)'},{k:'Layer.EDGES',ke:'enum',v:'EdgeArray (H,W)'},{k:'"halftone"',ke:'str',v:'RGBArray — NEW',new:true}],
+    audio:'AudioFrame(beat=False, rms=0.42, …)', rstate:[{k:'HalfToneRandomizationRule',v:'{seed: 4831, prev_offsets: ndarray}',new:true}]},
+  { id:'audio', name:'AudioReactiveEdgeRule', badge:'sb-branch', badgeLabel:'BRANCH', arrow:'"audio_lines" ← input: Layer.EDGES',
+    ops:[{t:'input = context.get_layer(<span class="hle">Layer.EDGES</span>)'},{t:'audio = context.audio  → <span class="hlp">AudioFrame</span>(beat=<span class="hly">True</span>, bass=0.91)'},{t:'state.beat_decay = 1.0  <span style="color:var(--muted)">// beat hit!</span>'},{t:'context.set_layer(<span class="hly">"audio_lines"</span>, result)'}],
+    layers:[{k:'Layer.ORIGINAL',ke:'enum',v:'RGBArray (H,W,3)'},{k:'Layer.MASK',ke:'enum',v:'MaskArray (H,W)'},{k:'Layer.EDGES',ke:'enum',v:'EdgeArray (H,W)'},{k:'"halftone"',ke:'str',v:'RGBArray'},{k:'"audio_lines"',ke:'str',v:'RGBArray — NEW',new:true}],
+    audio:'<span style="color:#4ade80">AudioFrame(beat=True, rms=0.91, bass=0.94, …)</span>',
+    rstate:[{k:'HalfToneRandomizationRule',v:'{seed: 4831, …}'},{k:'AudioReactiveEdgeRule',v:'{beat_decay: 1.0, displacement_field: ndarray}',new:true}]},
+  { id:'composite', name:'CompositeRule', badge:'sb-composite', badgeLabel:'COMPOSITE', arrow:'Layer.FINAL ← screen("halftone", "audio_lines")',
+    ops:[{t:'layers = [ctx.get_layer(<span class="hly">"halftone"</span>), ctx.get_layer(<span class="hly">"audio_lines"</span>)]'},{t:'result = screen_blend(layers[0], layers[1])'},{t:'context.set_layer(<span class="hle">Layer.FINAL</span>, result)'}],
+    layers:[{k:'Layer.ORIGINAL',ke:'enum',v:'RGBArray (H,W,3)'},{k:'Layer.MASK',ke:'enum',v:'MaskArray (H,W)'},{k:'Layer.EDGES',ke:'enum',v:'EdgeArray (H,W)'},{k:'"halftone"',ke:'str',v:'RGBArray'},{k:'"audio_lines"',ke:'str',v:'RGBArray'},{k:'Layer.FINAL',ke:'enum',v:'RGBArray — COMPOSITE',new:true}],
+    audio:'AudioFrame(beat=True, rms=0.91, …)',
+    rstate:[{k:'HalfToneRandomizationRule',v:'{seed: 4831, …}'},{k:'AudioReactiveEdgeRule',v:'{beat_decay: 0.85, …}'}]},
+];
+
+let currentStep = -1;
+function renderStep(idx) {
+  currentStep = idx;
+  const step = STEPS[idx];
+  document.querySelectorAll('.pipeline-step').forEach((el,i) => el.classList.toggle('active', i===idx));
+  document.getElementById('ctx-fidx').textContent = idx;
+  document.getElementById('ctx-ts').textContent = (idx/30).toFixed(3);
+  document.getElementById('ctx-audio').innerHTML = step.audio;
+  const layersEl = document.getElementById('ctx-layers');
+  const emptyEl  = document.getElementById('ctx-empty');
+  layersEl.innerHTML = '';
+  emptyEl.style.display = step.layers.length === 0 ? '' : 'none';
+  step.layers.forEach((l,i) => {
+    const el = document.createElement('div');
+    el.className = 'layer-entry' + (l.new?' layer-new':'');
+    const keyHtml = l.ke==='enum'
+      ? `<span class="le-k"><span class="le-enum">Layer</span>.<span class="le-enum">${l.k.replace('Layer.','')}</span></span>`
+      : `<span class="le-k"><span class="le-str">${l.k}</span></span>`;
+    el.innerHTML = `<span>${keyHtml}</span><span class="le-val">${l.v}</span>`;
+    layersEl.appendChild(el);
+    setTimeout(() => el.classList.add('visible'), i*60);
+  });
+  const rs = document.getElementById('ctx-rstate');
+  if (step.rstate.length===0) {
+    rs.innerHTML = '<div style="color:var(--muted);font-size:11px;font-style:italic">empty</div>';
+  } else {
+    rs.innerHTML = '';
+    step.rstate.forEach(r => {
+      const el = document.createElement('div');
+      el.className = 'ctx-field' + (r.new?' layer-new':'');
+      el.style.cssText = 'flex-direction:column;align-items:flex-start';
+      el.innerHTML = `<span class="fn" style="font-size:11px">${r.k}</span><span class="ft" style="font-size:11px;color:var(--muted)">${r.v}</span>`;
+      rs.appendChild(el);
+    });
+  }
+  document.getElementById('btn-prev').disabled = idx<=0;
+  document.getElementById('btn-next').disabled = idx>=STEPS.length-1;
+  document.getElementById('step-counter').textContent = `Step ${idx+1} / ${STEPS.length}`;
+}
+function initLayers() {
+  const container = document.getElementById('pipeline-steps');
+  STEPS.forEach((step,i) => {
+    const el = document.createElement('div');
+    el.className = 'pipeline-step';
+    el.innerHTML = `
+      <div class="step-header">
+        <span class="step-num">${String(i+1).padStart(2,'0')}</span>
+        <span class="step-badge ${step.badge}">${step.badgeLabel}</span>
+        <span class="step-name">${step.name}</span>
+        <span class="step-arrow">${step.arrow}</span>
+      </div>
+      <div class="step-body">${step.ops.map(o=>`<div class="step-line">${o.t}</div>`).join('')}</div>`;
+    el.addEventListener('click', () => renderStep(i));
+    container.appendChild(el);
+  });
+  document.getElementById('btn-next').addEventListener('click', () => { if(currentStep<STEPS.length-1) renderStep(currentStep+1); });
+  document.getElementById('btn-prev').addEventListener('click', () => { if(currentStep>0) renderStep(currentStep-1); });
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    currentStep=-1;
+    document.querySelectorAll('.pipeline-step').forEach(el=>el.classList.remove('active'));
+    document.getElementById('ctx-layers').innerHTML='';
+    document.getElementById('ctx-empty').style.display='';
+    document.getElementById('ctx-rstate').innerHTML='<div style="color:var(--muted);font-size:11px;font-style:italic">empty</div>';
+    document.getElementById('ctx-fidx').textContent='0';
+    document.getElementById('ctx-ts').textContent='0.000';
+    document.getElementById('ctx-audio').innerHTML='None';
+    document.getElementById('btn-prev').disabled=true;
+    document.getElementById('btn-next').disabled=false;
+    document.getElementById('step-counter').textContent=`Step 0 / ${STEPS.length}`;
+  });
+}
+initLayers();
+</script>
+</body>
+</html>
