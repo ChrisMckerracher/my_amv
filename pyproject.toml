@@ -10,24 +10,19 @@ authors = [
 
 dependencies = [
     "torch>=2.0",
-    "torchvision",
     "opencv-python",
-    "opencv-contrib-python",
     "numpy",
     "Pillow",
     "librosa",
     "soundfile",
-    "ffmpeg-python",
     "controlnet-aux",
     "transformers",
-    "diffusers",
-    "accelerate",
+    "mediapipe",
+    "psutil",
     "pydantic>=2.0",
     "pyyaml",
     "typer",
     "svgwrite",
-    "scikit-image",
-    "scipy",
 ]
 
 [project.optional-dependencies]
@@ -73,9 +68,8 @@ module = [
     "cv2.*",
     "librosa.*",
     "controlnet_aux.*",
-    "diffusers.*",
     "svgwrite.*",
-    "skimage.*",
+    "mediapipe.*",
     "open3d.*",
 ]
 ignore_missing_imports = true

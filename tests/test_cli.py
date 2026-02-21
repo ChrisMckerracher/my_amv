@@ -1,6 +1,7 @@
 """Tests for CLI functionality."""
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -8,6 +9,18 @@ from typer.testing import CliRunner
 from my_amv.__main__ import app
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def mock_pipeline(tmp_path):
+    """Mock Pipeline and AudioSource so CLI tests don't require real video/audio files."""
+    with patch("my_amv.__main__.Pipeline") as MockPipeline, \
+         patch("my_amv.__main__.AudioSource") as MockAudioSource:
+        instance = MagicMock()
+        instance.process_video.return_value = tmp_path / "result.mp4"
+        MockPipeline.return_value = instance
+        MockAudioSource.return_value = MagicMock()
+        yield MockPipeline
 
 
 class TestRunCommand:

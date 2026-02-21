@@ -14,7 +14,9 @@ from typing import Optional
 
 import typer
 
+from my_amv.audio import AudioSource
 from my_amv.config import PipelineConfig, RuleConfig, build_pipeline, load_config
+from my_amv.pipeline import Pipeline
 from my_amv.registry import discover_rules, get_registry
 from my_amv.rule import CompositeRule
 
@@ -163,10 +165,28 @@ def run(
             if rule.output_layer is not None:
                 typer.echo(f"     output_layer: {rule.output_layer}")
 
-        # Note: Actual pipeline execution will be implemented in the Pipeline class
-        # For now, we just validate the configuration and build the rule chain
-        typer.echo("\nPipeline configuration validated successfully!")
-        typer.echo("Note: Pipeline execution is not yet implemented.")
+        # Build AudioSource if audio file is provided
+        audio_source = None
+        if pipeline_config.audio is not None:
+            typer.echo("Analyzing audio...")
+            audio_source = AudioSource(pipeline_config.audio)
+
+        # Run the pipeline
+        pipeline = Pipeline(
+            rules=rules,
+            audio_source=audio_source,
+            checkpoint_dir=pipeline_config.checkpoint_dir,
+        )
+
+        typer.echo("\nStarting pipeline...")
+        output = pipeline.process_video(
+            input_path=pipeline_config.input,
+            output_path=pipeline_config.output,
+            audio_path=pipeline_config.audio,
+            frame_range=pipeline_config.frame_range,
+            output_frames_dir=pipeline_config.output_frames_dir,
+        )
+        typer.echo(f"\nDone! Output: {output}")
 
     except Exception as e:
         # Display error message
