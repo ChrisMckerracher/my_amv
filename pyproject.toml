@@ -16,6 +16,7 @@ dependencies = [
     "numpy",
     "Pillow",
     "librosa",
+    "soundfile",
     "ffmpeg-python",
     "controlnet-aux",
     "transformers",
