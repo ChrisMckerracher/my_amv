@@ -165,11 +165,26 @@ def run(
             if rule.output_layer is not None:
                 typer.echo(f"     output_layer: {rule.output_layer}")
 
+        # Get video metadata (needed for AudioSource)
+        from my_amv.video_io import VideoReader
+        reader = VideoReader()
+        metadata = reader.get_metadata(pipeline_config.input)
+        frame_range = pipeline_config.frame_range
+        frame_count = (
+            (frame_range[1] - frame_range[0]) if frame_range and frame_range[1] != -1
+            else metadata.frame_count
+        )
+
         # Build AudioSource if audio file is provided
         audio_source = None
         if pipeline_config.audio is not None:
             typer.echo("Analyzing audio...")
-            audio_source = AudioSource(pipeline_config.audio)
+            audio_source = AudioSource(
+                pipeline_config.audio,
+                fps=metadata.fps,
+                frame_count=frame_count,
+            )
+            audio_source.analyze()
 
         # Run the pipeline
         pipeline = Pipeline(

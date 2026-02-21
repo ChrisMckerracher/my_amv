@@ -127,6 +127,16 @@ def discover_rules() -> None:
             # Skip modules that can't be imported (e.g., missing dependencies)
             pass
 
+    # Merge rules registered via my_amv.rules.register_rule (separate registry)
+    # into the main registry so both registration paths work.
+    try:
+        from my_amv.rules import _RULE_REGISTRY as rules_registry  # type: ignore[attr-defined]
+        for name, cls in rules_registry.items():
+            if name not in _REGISTRY:
+                _REGISTRY[name] = cls
+    except (ImportError, AttributeError):
+        pass
+
 
 def clear_registry() -> None:
     """Clear all registered rules.

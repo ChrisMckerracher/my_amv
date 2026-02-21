@@ -50,24 +50,30 @@ def list_rules() -> list[str]:
 if not TYPE_CHECKING:
     from my_amv.rules.audio_reactive import AudioReactiveEdgeRule
     from my_amv.rules.depth import DepthMappingRule
+    from my_amv.rules.edge_detection import EdgeDetectionRule
     from my_amv.rules.halftone import HalfToneRandomizationRule
+    from my_amv.rules.segmentation import PersonSegmentationRule
     from my_amv.rules.temporal_smooth import TemporalSmoothRule
 
     __all__ = [
-        "DepthMappingRule",
-        "HalfToneRandomizationRule",
-        "TemporalSmoothRule",
         "AudioReactiveEdgeRule",
+        "DepthMappingRule",
+        "EdgeDetectionRule",
+        "HalfToneRandomizationRule",
+        "PersonSegmentationRule",
+        "TemporalSmoothRule",
         "register_rule",
         "get_rule",
         "list_rules",
     ]
 else:
     __all__ = [
-        "DepthMappingRule",
-        "HalfToneRandomizationRule",
-        "TemporalSmoothRule",
         "AudioReactiveEdgeRule",
+        "DepthMappingRule",
+        "EdgeDetectionRule",
+        "HalfToneRandomizationRule",
+        "PersonSegmentationRule",
+        "TemporalSmoothRule",
         "register_rule",
         "get_rule",
         "list_rules",

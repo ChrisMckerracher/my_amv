@@ -11,12 +11,14 @@ import numpy as np
 
 from my_amv.context import FrameContext
 from my_amv.rule import EffectRule
+from my_amv.rules import register_rule
 from my_amv.types import Layer, MaskArray, RGBArray
 
 
 ModelType = Literal["mediapipe", "sam2"]
 
 
+@register_rule
 class PersonSegmentationRule(EffectRule[None]):
     """Extract person silhouette/mask from frames.
 
@@ -64,6 +66,7 @@ class PersonSegmentationRule(EffectRule[None]):
         self.roi = roi
         self.output_layer = output_layer
         self.input_layer = Layer.MAIN
+        self._threshold: float = 0.5
 
         # Lazy-loaded models
         self._mediapipe_model: object | None = None
@@ -73,21 +76,45 @@ class PersonSegmentationRule(EffectRule[None]):
         return "SilhouetteExtract"
 
     def _get_mediapipe_model(self):
-        """Lazy-load MediaPipe selfie segmentation model."""
+        """Lazy-load MediaPipe selfie segmentation model (Tasks API, mediapipe >= 0.10)."""
         if self._mediapipe_model is not None:
             return self._mediapipe_model
 
         try:
             import mediapipe as mp
+            from mediapipe.tasks import python
+            from mediapipe.tasks.python import vision
         except ImportError as e:
             raise RuntimeError(
                 "Install mediapipe to use model='mediapipe'. "
                 "Run: pip install mediapipe"
             ) from e
 
-        self._mediapipe_model = mp.solutions.selfie_segmentation.SelfieSegmentation(
-            model_selection=1  # 0 = general, 1 = landscape (higher accuracy)
+        import urllib.request
+        from pathlib import Path
+
+        cache_dir = Path.home() / ".cache" / "mediapipe"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        model_path = cache_dir / "selfie_segmenter.tflite"
+
+        if not model_path.exists():
+            url = (
+                "https://storage.googleapis.com/mediapipe-models/"
+                "image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite"
+            )
+            print(f"Downloading MediaPipe selfie segmentation model to {model_path}...")
+            urllib.request.urlretrieve(url, model_path)
+
+        BaseOptions = python.BaseOptions
+        ImageSegmenterOptions = vision.ImageSegmenterOptions
+        VisionRunningMode = vision.RunningMode
+
+        options = ImageSegmenterOptions(
+            base_options=BaseOptions(model_asset_path=str(model_path)),
+            running_mode=VisionRunningMode.IMAGE,
+            output_confidence_masks=True,
         )
+        self._mediapipe_model = vision.ImageSegmenter.create_from_options(options)
         return self._mediapipe_model
 
     def _get_sam2_model(self):
@@ -111,32 +138,30 @@ class PersonSegmentationRule(EffectRule[None]):
         return self._sam2_model
 
     def _apply_mediapipe(self, frame: RGBArray) -> MaskArray:
-        """Apply MediaPipe selfie segmentation.
+        """Apply MediaPipe selfie segmentation (Tasks API).
 
         Args:
-            frame: RGB input frame (BGR for cv2)
+            frame: RGB input frame
 
         Returns:
             Binary mask array (0 or 255)
         """
-        model = self._get_mediapipe_model()
+        import mediapipe as mp
 
-        # MediaPipe expects RGB
+        segmenter = self._get_mediapipe_model()
+
+        # MediaPipe Tasks API expects RGB
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
-        # Process
-        results = model.process(rgb_frame)
+        result = segmenter.segment(mp_image)
 
-        if results.segmentation_mask is None:
-            # No person detected, return empty mask
+        if not result.confidence_masks:
             return np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
 
-        # Get segmentation mask (float 0-1)
-        mask_float = results.segmentation_mask
-
-        # Threshold at 0.5 for binary mask
-        mask_binary = (mask_float > 0.5).astype(np.uint8) * 255
-
+        # confidence_masks[0] = person confidence (float 0-1)
+        mask_float = result.confidence_masks[0].numpy_view()
+        mask_binary = (mask_float > self._threshold).astype(np.uint8) * 255
         return mask_binary
 
     def _apply_sam2(self, frame: RGBArray) -> MaskArray:
@@ -258,6 +283,9 @@ class PersonSegmentationRule(EffectRule[None]):
 
         if "apply_mask_to_frame" in params:
             self.apply_mask_to_frame = bool(params["apply_mask_to_frame"])
+
+        if "threshold" in params:
+            self._threshold = float(params["threshold"])
 
         if "roi" in params:
             roi = params["roi"]

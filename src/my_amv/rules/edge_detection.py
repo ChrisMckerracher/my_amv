@@ -11,6 +11,7 @@ import numpy as np
 
 from my_amv.context import FrameContext
 from my_amv.rule import EffectRule
+from my_amv.rules import register_rule
 from my_amv.types import EdgeArray, Layer, RGBArray
 
 
@@ -27,6 +28,7 @@ AlgorithmType = Literal[
 ]
 
 
+@register_rule
 class EdgeDetectionRule(EffectRule[None]):
     """Detect edges in frames using configurable algorithms.
 

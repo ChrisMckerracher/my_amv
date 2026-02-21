@@ -110,6 +110,7 @@ class Pipeline:
         """
         self.rules = rules
         self.audio_source = audio_source
+        self._audio_frame_offset: int = 0
 
         # Configure checkpointing
         self.checkpoint = CheckpointConfig(
@@ -144,10 +145,11 @@ class Pipeline:
         Returns:
             Processed RGB array
         """
-        # Get audio frame if available
+        # Get audio frame if available. AudioSource frames are 0-based relative
+        # to the clip, so subtract the offset set at process_video start.
         audio_frame: AudioFrame | None = None
         if self.audio_source is not None:
-            audio_frame = self.audio_source.get_frame(frame_index)
+            audio_frame = self.audio_source.get_frame(frame_index - self._audio_frame_offset)
 
         # Build context with ORIGINAL layer set
         context = FrameContext(
@@ -281,8 +283,13 @@ class Pipeline:
         else:
             start_frame, end_frame = frame_range
 
+        # Audio frame offset: AudioSource frames are 0-based relative to the
+        # clip, but frame_index is absolute. Store the offset so _build_context
+        # can translate correctly.
+        self._audio_frame_offset = start_frame
+
         # Setup checkpointing
-        start_from_frame = 0
+        start_from_frame = start_frame
         if self.checkpoint.enabled and self.checkpoint.dir:
             start_from_frame = self._find_resume_checkpoint(
                 self.checkpoint.dir, start_frame, end_frame

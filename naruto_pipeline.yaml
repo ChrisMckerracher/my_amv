@@ -1,0 +1,46 @@
+input: /Users/chrismck/Downloads/narurto.mp4
+output: /Users/chrismck/Downloads/naruto_output.mp4
+audio: /Users/chrismck/Downloads/narurto_audio_8_11.aac
+frame_range: [240, 329]
+
+rules:
+  # 1. Extract person silhouette using MediaPipe
+  - name: PersonSegmentationRule
+    output_layer: mask
+    params:
+      model: mediapipe
+      threshold: 0.5
+
+  # 2. Detect edges on the masked person
+  - name: EdgeDetectionRule
+    input_layer: mask
+    output_layer: edges
+    params:
+      algorithm: canny
+      detail_level: 7
+
+  # 3. Audio-reactive lines driven by the beat (reads edges layer)
+  - name: AudioReactiveEdgeRule
+    input_layer: edges
+    output_layer: audio_lines
+    params:
+      sensitivity: 0.8
+      temporal_smoothing: 0.6
+
+  # 4. Halftone on the original main frame
+  - name: HalfToneRandomizationRule
+    output_layer: halftone
+    params:
+      dot_size: 4
+      temporal_smoothing: 0.7
+
+  # 5. Composite: halftone base + audio lines on top
+  - name: CompositeRule
+    params:
+      layers:
+        - layer: halftone
+          blend_mode: normal
+          opacity: 1.0
+        - layer: audio_lines
+          blend_mode: screen
+          opacity: 0.9
