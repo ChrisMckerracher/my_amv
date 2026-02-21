@@ -51,6 +51,7 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v --cov=src/my_amv --cov-report=term-missing"
+markers = ["integration: end-to-end integration tests (require ffmpeg)"]
 
 [tool.mypy]
 python_version = "3.10"

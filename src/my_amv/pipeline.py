@@ -272,8 +272,8 @@ class Pipeline:
         # Get video metadata
         reader = VideoReader()
         metadata = reader.get_metadata(input_path)
-        fps = metadata["fps"]
-        frame_count = metadata["frame_count"]
+        fps = metadata.fps
+        frame_count = metadata.frame_count
 
         # Determine frame range
         if frame_range is None:
@@ -296,9 +296,11 @@ class Pipeline:
 
         frames_dir.mkdir(parents=True, exist_ok=True)
 
-        # Extract frames if not resuming
+        # Extract frames — always extract the full range so resumed runs
+        # have access to all frames from start_frame to end_frame.
         extracted_frames_dir = frames_dir / "extracted"
-        if start_from_frame == start_frame:
+        last_needed = extracted_frames_dir / f"frame_{end_frame - 1:06d}.png"
+        if not last_needed.exists():
             reader.extract_frames(
                 input_path,
                 extracted_frames_dir,
